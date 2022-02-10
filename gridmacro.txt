@@ -1,0 +1,227 @@
+Option Explicit
+
+'© 2019, 2022 Nessa Carson
+'nessa.carson@syngenta.com
+'Integrated workflow grid table Version 1.5
+
+Sub Worksheet_SelectionChange(ByVal Target As Range)
+
+'Uncomment these to debug, and remove "ByVal Target As Range" from Sub name
+'Dim Target As Range
+'Set Target = ActiveCell
+
+Dim lastcol, lastrow As Long
+Dim prows, pcolumns As Long
+Dim lastheadcol, lasttablerow, firstplatecol As Long
+Dim headers, LocationHeader, StoichTable, CurrentCell, Plate As Range
+Dim LocationColumn As Integer
+Dim part, LocList() As String
+Dim first, third As String
+Dim poscolarray As Range
+Dim x, y, rowarray(), colarray(), all_locations(), all_zero_locations() As Variant
+Dim posn, posnfirst, posnthird As Long
+Dim firstcolumn, thirdcolumn, firstrow, thirdrow As String
+Dim i, displacement As Integer
+
+Dim FillColour, FillWhite, FillDebug As String
+FillColour = RGB(0, 176, 240)
+FillWhite = RGB(256, 256, 256)
+FillDebug = RGB(256, 0, 0)
+
+lastcol = Cells(3, Columns.Count).End(xlToLeft).Column
+lastheadcol = Cells(1, Columns.Count).End(xlToLeft).Column
+Set poscolarray = Range(Cells(3, lastheadcol + 2).Address(), Cells(3, lastcol).Address())
+For i = poscolarray.Cells.Count To 0 Step -1
+    If poscolarray.Item(i).Value = "" Then
+        firstplatecol = poscolarray.Item(i).Column
+        Exit For
+    End If
+    Next i
+displacement = firstplatecol - lastheadcol - 1
+pcolumns = lastcol - lastheadcol - displacement - 1
+colarray() = Application.Transpose(Application.Transpose(Range(Cells(3, lastheadcol + displacement + 2).Address(), Cells(3, lastcol).Address())))
+
+Set headers = Range("A1", Cells(1, lastheadcol).Address())
+With headers
+    Set LocationHeader = .Find("Location", LookIn:=xlValues)
+    LocationColumn = LocationHeader.Column
+End With
+
+lastrow = Cells(Rows.Count, lastheadcol + displacement + 1).End(xlUp).Row - 3
+prows = lastrow - 3
+lasttablerow = Cells(Rows.Count, 2).End(xlUp).Row
+Debug.Print (Cells(4, lastheadcol + displacement + 1).Address())
+Debug.Print Cells(3, lastheadcol + 2).Address(), Cells(3, lastcol).Address()
+rowarray() = Application.Transpose(Range(Cells(4, lastheadcol + displacement + 1).Address(), Cells(lastrow, lastheadcol + displacement + 1).Address()))
+
+Set Plate = Range(Cells(4, lastheadcol + displacement + 2).Address(), Cells(lastrow, lastcol).Address())
+Set StoichTable = Range("A2", Cells(lasttablerow, lastheadcol).Address())
+
+Debug.Print "Plate rows: " & prows & ", columns: " & pcolumns
+
+'Choose all combinations of allowed rows and columns for all_locations
+ReDim all_locations(0 To 0)
+For Each x In rowarray()
+    For Each y In colarray()
+        all_locations(UBound(all_locations)) = x & y
+        If UBound(all_locations) <> 95 Then
+            ReDim Preserve all_locations(UBound(all_locations) + 1)
+        End If
+    Next
+Next
+ReDim all_zero_locations(0 To 0)
+For Each x In rowarray()
+    For Each y In colarray()
+        all_zero_locations(UBound(all_zero_locations)) = x & "0" & y
+        If UBound(all_zero_locations) <> 95 Then
+            ReDim Preserve all_zero_locations(UBound(all_zero_locations) + 1)
+        End If
+    Next
+Next
+
+If Target.Cells.CountLarge = 1 Then
+    'Colouring in
+    If Not Intersect(Target, StoichTable) Is Nothing Then
+        Set CurrentCell = Cells(Target.Row, LocationColumn)
+    Else
+        Set CurrentCell = Range("A1")
+    End If
+    If CurrentCell.Value = "Dose Method" Then
+        GoTo Pass
+    ElseIf CurrentCell.Value = "ALL" Then
+        Plate.Interior.Color = FillColour
+    ElseIf CurrentCell.Value = "0" Then
+        Plate.Interior.Color = FillWhite
+    Else
+        LocList() = Split(CurrentCell.Value, ",")
+        Plate.Interior.Color = FillWhite
+            
+        For Each part In LocList()
+            If InStr(part, "-") = 0 Then
+                
+                'Look for rows
+                If Not IsError(Application.Match(part, rowarray(), 0)) Then
+                    posn = Application.Match(part, rowarray(), False)
+                    Range(Cells(posn + 3, lastheadcol + displacement + 2).Address(), Cells(posn + 3, lastcol).Address()).Interior.Color = FillColour
+                    
+                'Look for cells
+                ElseIf Not IsError(Application.Match(part, all_locations(), 0)) Then
+                    posn = Application.Match(part, all_locations(), False)
+                    If posn Mod pcolumns <> 0 Then
+                        Range(Cells(posn \ pcolumns + displacement + 1, posn Mod pcolumns + lastheadcol + 4).Address()).Interior.Color = FillColour
+                    Else
+                        Range(Cells(posn \ pcolumns + 3, pcolumns + lastheadcol + displacement + 1).Address()).Interior.Color = FillColour
+                    End If
+                ElseIf Not IsError(Application.Match(part, all_zero_locations(), 0)) Then
+                    posn = Application.Match(part, all_zero_locations(), False)
+                    If posn Mod pcolumns <> 0 Then
+                        Range(Cells(posn \ pcolumns + displacement + 1, posn Mod pcolumns + lastheadcol + displacement + 1).Address()).Interior.Color = FillColour
+                    Else
+                        Range(Cells(posn \ pcolumns + 3, pcolumns + lastheadcol + 4).Address()).Interior.Color = FillColour
+                    End If
+                
+                'Look for columns (last because need to convert to double)
+                ElseIf IsNumeric(part) Then
+                    If Not IsError(Application.Match(CDbl(part), colarray(), 0)) Then
+                        posn = Application.Match(CDbl(part), colarray(), False)
+                        Range(Cells(4, lastheadcol + posn + displacement + 1).Address(), Cells(lastrow, lastheadcol + posn + displacement + 1).Address()).Interior.Color = FillColour
+                    End If
+                End If
+                
+            'Now look for composites split by - character
+            Else
+                first = Split(part, "-")(0)
+                third = Split(part, "-")(1)
+                
+                'If they're both rows
+                If Not IsError(Application.Match(first, rowarray(), 0)) Then
+                    If Not IsError(Application.Match(third, rowarray(), 0)) Then
+                        posnfirst = Application.Match(first, rowarray(), False)
+                        posnthird = Application.Match(third, rowarray(), False)
+                        Range(Cells(posnfirst + 3, lastheadcol + displacement + 2).Address(), Cells(posnthird + 3, lastcol).Address()).Interior.Color = FillColour
+                    End If
+                        
+                ElseIf Not IsError(Application.Match(first, all_locations(), 0)) Then
+                    'If they're both locations without zeroes
+                    If Not IsError(Application.Match(third, all_locations(), 0)) Then
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        thirdcolumn = CDbl(Right(third, Len(third) - 1))
+                        thirdcolumn = Application.Match(thirdcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        thirdrow = Left(third, 1)
+                        thirdrow = Application.Match(thirdrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(thirdrow + 3, lastheadcol + thirdcolumn + displacement + 1).Address()).Interior.Color = FillColour
+                        
+                    ElseIf Not IsError(Application.Match(third, all_zero_locations(), 0)) Then 'Both are locations, third has zero
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        thirdcolumn = CDbl(Right(third, Len(third) - 1))
+                        thirdcolumn = Application.Match(thirdcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        thirdrow = Left(third, 1)
+                        thirdrow = Application.Match(thirdrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(thirdrow + 3, lastheadcol + thirdcolumn + displacement + 1).Address()).Interior.Color = FillColour
+                        
+                    'If first is location without zero third is column
+                    ElseIf Not IsError(Application.Match(CDbl(third), colarray(), False)) Then
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(firstrow + 3, lastheadcol + third + displacement + 1).Address()).Interior.Color = FillColour
+                    End If
+                    
+                ElseIf Not IsError(Application.Match(first, all_zero_locations(), 0)) Then ' Run it again for zeroes
+                    'If they're both locations
+                    If Not IsError(Application.Match(third, all_locations(), 0)) Then
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        thirdcolumn = CDbl(Right(third, Len(third) - 1))
+                        thirdcolumn = Application.Match(thirdcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        thirdrow = Left(third, 1)
+                        thirdrow = Application.Match(thirdrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(thirdrow + 3, lastheadcol + thirdcolumn + displacement + 1).Address()).Interior.Color = FillColour
+                        
+                    ElseIf Not IsError(Application.Match(third, all_zero_locations(), 0)) Then
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        thirdcolumn = CDbl(Right(third, Len(third) - 1))
+                        thirdcolumn = Application.Match(thirdcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        thirdrow = Left(third, 1)
+                        thirdrow = Application.Match(thirdrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(thirdrow + 3, lastheadcol + thirdcolumn + displacement + 1).Address()).Interior.Color = FillColour
+                        
+                    'If first is location with zero, third is column
+                    ElseIf Not IsError(Application.Match(CDbl(third), colarray(), False)) Then
+                        firstcolumn = CDbl(Right(first, Len(first) - 1))
+                        firstcolumn = Application.Match(firstcolumn, colarray(), False)
+                        firstrow = Left(first, 1)
+                        firstrow = Application.Match(firstrow, rowarray(), False)
+                        Range(Cells(firstrow + 3, lastheadcol + firstcolumn + displacement + 1).Address(), Cells(firstrow + 3, lastheadcol + third + displacement + 1).Address()).Interior.Color = FillColour
+                    End If
+                    
+                'If they're both columns (last because need to convert to double)
+                ElseIf Not IsError(Application.Match(CDbl(first), colarray(), False)) Then
+                    If Not IsError(Application.Match(CDbl(third), colarray(), False)) Then
+                        posnfirst = Application.Match(CDbl(first), colarray(), False)
+                        posnthird = Application.Match(CDbl(third), colarray(), False)
+                        Range(Cells(4, lastheadcol + posnfirst + displacement + 1).Address(), Cells(lastrow, lastheadcol + posnthird + displacement + 1).Address()).Interior.Color = FillColour
+                    End If
+                End If
+                    
+            End If
+        Next part
+
+    End If
+End If
+Pass:
+
+Debug.Print "---END---"
+End Sub
