@@ -1,262 +1,259 @@
-﻿# Updated 2021-May-16 12:23
-'''See params.py for version info'''
-
+﻿'''See params.py for version info'''
 import os
 import string
+import textwrap
 
 import PySimpleGUI as sg
 
 import params # Parameter file including author, copyright, version, contact details, and required parameters to run workflow
 
 ''' ALL FUNCTIONS '''
-def permissionerrorpopup(error, filename):
-    message = f'Permission denied: {filename}'
-    message = ('\n  ').join(message[i:i+64] for i in range(0, len(message), 64)) # Line breaks
-    message += '\nPlease close the file to continue.'
+def permission_error_popup(error, filename):
+    message = f'Permission denied: {filename}. Please close the file to continue.'
+    wrapped = textwrap.fill(message, width = 64, break_long_words = True, break_on_hyphens=True)
     
-    if params.showGUI:
-        layout = [  [sg.Text(message)],
-                    [sg.Text('', size = (3, None)), sg.Button('OK', bind_return_key = True), sg.Text('', size = (30, None))]
-                    ]
+    if not params.SHOW_GUI:
+        print(error, wrapped)
+        return None
+    
+    layout = [  [sg.Text(wrapped)],
+                [sg.Text('', size = (3, None)), sg.Button('OK', bind_return_key = True), sg.Text('', size = (30, None))]
+                ]
 
-        window = sg.Window(type(error).__name__, layout, keep_on_top = True, return_keyboard_events = True, right_click_menu = right)
-        window.Finalize()
-        window.TKroot.focus_force()
+    window = sg.Window(type(error).__name__, layout, keep_on_top = True, return_keyboard_events = True, right_click_menu = right)
+    window.finalize()
+    window.TKroot.focus_force()
 
-        while True:
+    while True:
+        try:
+            event, _ = window.read()
+            if event in ['OK', sg.WIN_CLOSED, 'Escape:27', '\r', chr(13)]:
+                break
+            elif event == 'Exit':
+                window.close()
+                raise CloseAllWindows
+        except (KeyboardInterrupt, CloseAllWindows):
+            close_all_windows()
+        finally:
             try:
-                event, values = window.Read()
-                if event in ['OK', sg.WIN_CLOSED, 'Escape:27', chr(13)]:
-                    break
-                elif event == 'Exit':
-                    window.close()
-                    raise CloseAllWindows
-            except (KeyboardInterrupt, CloseAllWindows):
-                closeallwindows()
-                return True # Error thrown
-        window.close()
-    else:
-        print(error)
-    return False # Error not thrown
+                window.close()
+            except Exception:
+                pass
 
 # Set Chronect dosing tray position
-def setChronectDosingTray():
-    if not params.Debug:
-        dropdownlist = ['Tray1', 'Tray2', 'Tray3', 'Not used']
-        if params.showGUI:
-            ChronectDosingTray = combobox('Tray location on Chronect Quantos', dropdownlist, defaulttext = 'Tray1', size = (8, 4), tooltip = 'Rear tray: Tray1\nMiddle tray: Tray2\nFront tray: Tray3')
+def set_chronect_dosing_tray():
+    if not params.DEBUG:
+        dropdown_list = ['Tray1', 'Tray2', 'Tray3', 'Not used']
+        tooltip = 'Rear tray: Tray1\nMiddle tray: Tray2\nFront tray: Tray3'
+        if params.SHOW_GUI:
+            chronect_dosing_tray = combobox('Tray location on Chronect Quantos', 
+                                            dropdown_list, 
+                                            default_text = 'Tray1', 
+                                            size = (8, 4), 
+                                            tooltip = tooltip
+                                            )
         else:
-            ChronectDosingTray = input('Tray location on Chronect Quantos (Tray1, Tray2, Tray3, Not used): ')
+            prompt = f'Tray location on Chronect Quantos ({(', ').join(dropdown_list)}): '
+            chronect_dosing_tray = input(prompt)
     else:
-        ChronectDosingTray = 'Tray1' # Default
+        chronect_dosing_tray = 'Tray1' # Default
 
-    if ChronectDosingTray == 'Not used':
-        ChronectDosingTray = None
+    if chronect_dosing_tray == 'Not used':
+        chronect_dosing_tray = None
 
-    return ChronectDosingTray
+    return chronect_dosing_tray
 
-def getRackType():
+def get_rack_type():
     # Determine rack type
-    racktype = None
-    dropdownlist = [i[0] for i in rackparameters]
-    if params.showGUI:
-        racktype = combobox('Rack type:', dropdownlist, defaulttext = '96')
+    rack_type = None
+    dropdown_list = [i[0] for i in rack_parameters]
+    if params.SHOW_GUI:
+        rack_type = combobox('Rack type:', dropdown_list, default_text = '96')
     else:
-        racktype = input('Rack type (96, 48, 24 (4-mL), 24 (8-mL): ')
+        rack_type = input('Rack type (96, 48, 24 (4-mL), 24 (8-mL): ')
 
-    return racktype
+    return rack_type
 
 # Create a cell in xml for the Chronect CSL file
-def xmlCell(data, datatype):
+def create_xml_cell(data: str|int|float, data_type: str):
+    data_type = data_type.capitalize()
+
     head = '\t' * 4 + '<s:Cell>\r\n'
     if data:
-        value = '\t' * 5 + f'<s:Data s:Type="{datatype.capitalize()}">{data}</s:Data>\r\n'
+        value = '\t' * 5 + f'<s:Data s:Type="{data_type}">{data}</s:Data>\r\n'
     else:
-        value = '\t' * 5 + f'<s:Data s:Type="{datatype.capitalize()}" />\r\n'
+        value = '\t' * 5 + f'<s:Data s:Type="{data_type}" />\r\n'
     tail = '\t' * 4 + '</s:Cell>'
 
     return f'{head}{value}{tail}'
 
-def createSubstanceCSL(chemicalName, doselocations):
+def create_substance_csl(chemical_name: str, dose_locations: list[str]):
     # Substance parameters
-    if all([not x for x in doselocations]): # if no doses will be made for this compound
+    if all(not x for x in dose_locations): # if no doses will be made for this compound
         return None
-    for amount in doselocations:
+    for amount in dose_locations:
         if amount and not (amount.endswith(' mg') or amount.endswith(' g')): # Only mg and g amounts allowed
             return None
-    ziplist = zip(all_locations_no_zeroes, doselocations)
+    zip_list = zip(all_locations_no_zeroes, dose_locations)
 
     # xml parameters
-    newrow = '\t' * 3 + '<s:Row>'
-    endrow = '\t' * 3 + '</s:Row>'
+    new_row = '\t' * 3 + '<s:Row>'
+    end_row = '\t' * 3 + '</s:Row>'
 
     # Global parameters
-    if racktype in [96, '96']:
-        vialtype = '1 mL Vials'
-    elif racktype in [48, '48']:
-        vialtype = '2 mL Vials'
-    elif racktype in [24, '24 (4-mL)']:
-        vialtype = '4 mL Vials'
-    elif racktype in [24, '24 (8-mL)']:
-        vialtype = '8 mL Vials'
-    tapduration = 2 # s
-    tapintensity = 50 # %
-    tolerancemode = 'ZeroPlus' # 'ZeroPlus' or 'MinusPlus'
+    if rack_type in [96, '96']:
+        vial_type = '1 mL Vials'
+    elif rack_type in [48, '48']:
+        vial_type = '2 mL Vials'
+    elif rack_type in [24, '24 (4-mL)']:
+        vial_type = '4 mL Vials'
+    elif rack_type == '24 (8-mL)':
+        vial_type = '8 mL Vials'
+    tap_duration = 2 # s
+    tap_intensity = 50 # %
+    tolerance_mode = 'ZeroPlus' # 'ZeroPlus' or 'MinusPlus'; generally recommend ZeroPlus
     tolerance = 10
 
-    substancelist = [newrow]
+    substance_list = [new_row]
     
     # Create job headers
-    substancelist.append(xmlCell('_', 'Number')) # Placeholder
-    substancelist.append(xmlCell(r'C:\Users\Public\Documents\Chronos\Methods\Set Config.cam', 'String'))
-    substancelist.append(xmlCell(vialtype, 'String'))
-    substancelist.append(xmlCell(tapduration, 'Number'))
-    substancelist.append(xmlCell(tapintensity, 'Number'))
-    substancelist.append(xmlCell(tolerancemode, 'String'))
-    substancelist.append(xmlCell('Quantos', 'String'))
-    substancelist.append(xmlCell('True', 'String'))
-    substancelist.append(xmlCell('True', 'String'))
-    substancelist.extend(8 * [xmlCell('', 'String')],)
-    substancelist.append(endrow)
+    substance_list.append(create_xml_cell('_', 'Number')) # Placeholder
+    substance_list.append(create_xml_cell(r'C:\Users\Public\Documents\Chronos\Methods\Set Config.cam', 'String'))
+    substance_list.append(create_xml_cell(vial_type, 'String'))
+    substance_list.append(create_xml_cell(tap_duration, 'Number'))
+    substance_list.append(create_xml_cell(tap_intensity, 'Number'))
+    substance_list.append(create_xml_cell(tolerance_mode, 'String'))
+    substance_list.append(create_xml_cell('Quantos', 'String'))
+    substance_list.append(create_xml_cell('True', 'String'))
+    substance_list.append(create_xml_cell('True', 'String'))
+    substance_list.extend(8 * [create_xml_cell('', 'String')],)
+    substance_list.append(end_row)
 
     # Create each dosing event
-    for (location, doseamount) in ziplist:
+    for (location, dose_amount) in zip_list:
         location = location if location[1] != '0' else f'{location[0]}{location[2]}' # ensure NO zeroes for Chronect
-        numberVialPosition = all_locations_no_zeroes.index(location) + 1
-        if doseamount.endswith(' mg'):
-            doseamount = doseamount[:-3]
-        elif doseamount.endswith(' g'):
-            doseamount = str(float(doseamount[:-2]) * 1000)
-        if doseamount:
-            substancelist.append(newrow)
-            substancelist.append(xmlCell('_', 'Number')) # Placeholder
-            substancelist.append(xmlCell(r'C:\Users\Public\Documents\Chronos\Methods\Dosing Method.cam', 'String'))
-            substancelist.extend(4 * [xmlCell('', 'String')],)
-            substancelist.append(xmlCell('Quantos', 'String'))
-            substancelist.extend(2 * [xmlCell('', 'String')],)
-            substancelist.append(xmlCell(chemicalName, 'String'))
-            substancelist.append(xmlCell(ChronectDosingTray, 'String'))
-            substancelist.append(xmlCell(numberVialPosition, 'Number'))
-            substancelist.append(xmlCell(location, 'String')) # Must NOT have leading zero for column
-            substancelist.append(xmlCell(doseamount, 'Number'))
-            substancelist.append(xmlCell(tolerance, 'Number'))
-            substancelist.extend(2 * [xmlCell('', 'String')],)
-            substancelist.append(endrow)
+        number_vial_position = all_locations_no_zeroes.index(location) + 1
+        if dose_amount.endswith(' mg'):
+            dose_amount = dose_amount[:-3]
+        elif dose_amount.endswith(' g'):
+            dose_amount = str(float(dose_amount[:-2]) * 1000)
+        if dose_amount:
+            substance_list.append(new_row)
+            substance_list.append(create_xml_cell('_', 'Number')) # Placeholder
+            substance_list.append(create_xml_cell(r'C:\Users\Public\Documents\Chronos\Methods\Dosing Method.cam', 'String'))
+            substance_list.extend(4 * [create_xml_cell('', 'String')],)
+            substance_list.append(create_xml_cell('Quantos', 'String'))
+            substance_list.extend(2 * [create_xml_cell('', 'String')],)
+            substance_list.append(create_xml_cell(chemical_name, 'String'))
+            substance_list.append(create_xml_cell(chronect_dosing_tray, 'String'))
+            substance_list.append(create_xml_cell(number_vial_position, 'Number'))
+            substance_list.append(create_xml_cell(location, 'String')) # Must NOT have leading zero for column
+            substance_list.append(create_xml_cell(dose_amount, 'Number'))
+            substance_list.append(create_xml_cell(tolerance, 'Number'))
+            substance_list.extend(2 * [create_xml_cell('', 'String')],)
+            substance_list.append(end_row)
 
-    substanceCSL = ('\r\n').join(substancelist)
+    substance_csl = ('\r\n').join(substance_list)
 
-    return substanceCSL
+    return substance_csl
 
-def createChronectInput():
+def create_chronect_input():
     # xml parameters
-    newrow = '\t' * 3 + '<s:Row>'
-    endrow = '\t' * 3 + '</s:Row>'
+    new_row = '\t' * 3 + '<s:Row>'
+    end_row = '\t' * 3 + '</s:Row>'
 
     # Global parameters
-    chkRepeatSchedule = 'False'
-    chkPrioritySchedule = 'False'
-    chkOverlappedSchedule = 'True'
+    chk_repeat_schedule = 'False'
+    chk_priority_schedule = 'False'
+    chk_overlapped_schedule = 'True'
     
     # Spreadsheet appearance parameters
-    colwidths = [22, 89, 104, 135, 142, 88, 41, 89, 89, 92, 97, 96, 126, 75, 80, 60, 56]
-    CSLheaders = ['Analysis Method', 'Quantos Tray Type', 'PreDose Tap Duration [s]', 'PreDose Tap Intensity [%]',
+    col_widths = [22, 89, 104, 135, 142, 88, 41, 89, 89, 92, 97, 96, 126, 75, 80, 60, 56]
+    csl_headers = ['Analysis Method', 'Quantos Tray Type', 'PreDose Tap Duration [s]', 'PreDose Tap Intensity [%]',
                   'Tolerance Mode', 'Device', 'Use Front Door?', 'Use Side Doors?', 'Substance Name',
                   'Quantos Vial Tray', 'Quantos Vial Pos.', 'Quantos Vial Pos. [Axx]', 'Amount [mg]',
                   'Tolerance [%]', 'Sample ID', 'Comment']
 
     # Create header
-    ChronectList = ['<?xml version = "1.0"?>']
-    ChronectList.append('<?mso-application progid=\'Excel.Sheet\'?>')
-    ChronectList.append('<s:Workbook xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:s="urn:schemas-microsoft-com:office:spreadsheet">')
-    ChronectList.append('\t<s:Worksheet s:Name="grdSampleList">')
-    ChronectList.append('\t\t<s:Table>')
-    for colwidth in colwidths:
-        ChronectList.append('\t' * 3 + f'<s:Column s:Width="{colwidth}" />')
-    ChronectList.append(newrow)
-    ChronectList.append(xmlCell('', 'String'))
-    for header in CSLheaders:
-        ChronectList.append(xmlCell(header, 'String'))
-    ChronectList.append(endrow)
+    chronect_list = ['<?xml version = "1.0"?>']
+    chronect_list.append('<?mso-application progid=\'Excel.Sheet\'?>')
+    chronect_list.append('<s:Workbook xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:s="urn:schemas-microsoft-com:office:spreadsheet">')
+    chronect_list.append('\t<s:Worksheet s:Name="grdSampleList">')
+    chronect_list.append('\t\t<s:Table>')
+    for col_width in col_widths:
+        chronect_list.append('\t' * 3 + f'<s:Column s:Width="{col_width}" />')
+    chronect_list.append(new_row)
+    chronect_list.append(create_xml_cell('', 'String'))
+    for header in csl_headers:
+        chronect_list.append(create_xml_cell(header, 'String'))
+    chronect_list.append(end_row)
 
-    for substanceCSL in CSLsubstances:
-        if substanceCSL:
-            ChronectList.append(substanceCSL)
+    for substance_csl in csl_substances:
+        if substance_csl:
+            chronect_list.append(substance_csl)
 
     # Create tail
-    ChronectList.append('\t\t</s:Table>')
-    ChronectList.append('\t</s:Worksheet>')
-    ChronectList.append('\t<s:Worksheet s:Name="grdSettings">')
-    ChronectList.append('\t\t<s:Table>')
-    ChronectList.extend(2 * ['\t\t\t<s:Column s:Width="50" />'],)
-    ChronectList.append(newrow)
-    ChronectList.append(xmlCell('chkRepeatSchedule', 'String'))
-    ChronectList.append(xmlCell(chkRepeatSchedule, 'String'))
-    ChronectList.append(endrow)
-    ChronectList.append(newrow)
-    ChronectList.append(xmlCell('chkPrioritySchedule', 'String'))
-    ChronectList.append(xmlCell(chkPrioritySchedule, 'String'))
-    ChronectList.append(endrow)
-    ChronectList.append(newrow)
-    ChronectList.append(xmlCell('chkOverlappedSchedule', 'String'))
-    ChronectList.append(xmlCell(chkOverlappedSchedule, 'String'))
-    ChronectList.append(endrow)
-    ChronectList.append('\t\t</s:Table>')
-    ChronectList.append('\t</s:Worksheet>')
-    ChronectList.append('</s:Workbook>')
+    chronect_list.append('\t\t</s:Table>')
+    chronect_list.append('\t</s:Worksheet>')
+    chronect_list.append('\t<s:Worksheet s:Name="grdSettings">')
+    chronect_list.append('\t\t<s:Table>')
+    chronect_list.extend(2 * ['\t\t\t<s:Column s:Width="50" />'],)
+    chronect_list.append(new_row)
+    chronect_list.append(create_xml_cell('chkRepeatSchedule', 'String'))
+    chronect_list.append(create_xml_cell(chk_repeat_schedule, 'String'))
+    chronect_list.append(end_row)
+    chronect_list.append(new_row)
+    chronect_list.append(create_xml_cell('chkPrioritySchedule', 'String'))
+    chronect_list.append(create_xml_cell(chk_priority_schedule, 'String'))
+    chronect_list.append(end_row)
+    chronect_list.append(new_row)
+    chronect_list.append(create_xml_cell('chkOverlappedSchedule', 'String'))
+    chronect_list.append(create_xml_cell(chk_overlapped_schedule, 'String'))
+    chronect_list.append(end_row)
+    chronect_list.append('\t\t</s:Table>')
+    chronect_list.append('\t</s:Worksheet>')
+    chronect_list.append('</s:Workbook>')
 
-    ChronectInputWritten = False
-    while not ChronectInputWritten:
+    chronect_input_written = False
+    while not chronect_input_written:
         try:
-            with open(ChronectInputfile, 'w', newline = '', encoding = 'utf-16') as fout:
+            with open(chronect_input_file, 'w', newline = '', encoding = 'utf-16') as fout:
                 i = 1
-                for line in ChronectList:
+                for line in chronect_list:
                     if 's:Type="Number">_</s:Data>' in line:
-                        linelist = line.split('s:Type="Number">_</s:Data>')
-                        newline = ''
-                        for section in linelist[:-1]:
-                            newline = newline + section + f's:Type="Number">{i}</s:Data>'
+                        line_list = line.split('s:Type="Number">_</s:Data>')
+                        new_line = ''
+                        for section in line_list[:-1]:
+                            new_line = new_line + section + f's:Type="Number">{i}</s:Data>'
                             i += 1
-                        newline = newline + linelist[-1]
-                        line = ('').join(newline)
+                        new_line = new_line + line_list[-1]
+                        line = ('').join(new_line)
                     fout.write(line + '\r\n')
         except PermissionError as error:
-            filename = os.path.join(mydir, ChronectInputfile)
-            permissionerrorpopup(error, filename)
+            filename = os.path.join(mydir, chronect_input_file)
+            permission_error_popup(error, filename)
         else:
-            ChronectInputWritten = True
+            chronect_input_written = True
         
-    addfinalmessage(f'{ChronectInputfile} Chronect inputfile written.')
+    add_final_message(f'{chronect_input_file} Chronect inputfile written.')
 
 # GUI functions
-def combobox(question, dropdownlist, **kwargs):
-    if params.showGUI:
-        # kwargs
-        defaulttext = ''
-        tooltip = None
-        if 'defaulttext' in kwargs:
-            defaulttext = kwargs['defaulttext']
-        if 'size' in kwargs:
-            comboboxsize = kwargs['size']
-        else:
-            comboboxsize = (5, 4)
-        if 'tooltip' in kwargs:
-            tooltip = kwargs['tooltip']
-
+def combobox(question, dropdown_list, default_text = '', size = (5,4), tooltip = None):
+    if params.SHOW_GUI:
         layout = [  [sg.Text(question.strip(), size = (30, None), tooltip = tooltip)],
-                    [sg.Sizer(30), sg.Combo(dropdownlist, default_value = '_', key = 'result', size = comboboxsize, enable_events = True)],
+                    [sg.Sizer(30), sg.Combo(dropdown_list, default_value = '_', key = 'result', size = size, enable_events = True)],
                     [sg.Button('OK', bind_return_key = True), sg.Text('', size = (23, None), right_click_menu= right)]
                     ]
 
         window = sg.Window('Choose parameters', layout, keep_on_top = True, return_keyboard_events = True, right_click_menu = right, use_default_focus = False)
-        window.Finalize()
+        window.finalize()
         window.TKroot.focus_force()
         window.Element('result').SetFocus()
-        window['result'].update(defaulttext)
+        window['result'].update(default_text)
 
-        i = 0
         while True:
             try:
-                event, values = window.Read()
+                event, values = window.read()
 
                 ''' You may need to add a delay or other function: loading the dialog by pressing Enter too slowly will trigger event == chr(13) '''
                 if event in ['OK', chr(13), sg.WIN_CLOSED]: # chr(13) == pressing Enter with focus on combobox
@@ -271,57 +268,54 @@ def combobox(question, dropdownlist, **kwargs):
         result = values['result']
     return result
 
-def addfinalmessage(message):
-    global finalmessage
+def add_final_message(message):
+    global final_message
     
     print(message)
     if not message.strip():
-        finalmessage.append(message.strip()) # Only strip if this leaves a non-zero length string
+        final_message.append(message.strip()) # Only strip if this leaves a non-zero length string
     else:
-        finalmessage.append(message)
+        final_message.append(message)
 
-def finalpopup(finalmessage, title):
-    message = ('\n').join(finalmessage)
+def final_popup(final_message, title):
+    message = ('\n').join(final_message)
     
-    if params.showGUI:
-        buttoncolumn = [    [sg.Button('Open Chronect input', key = 'Quantos')],
+    if params.SHOW_GUI:
+        button_column = [   [sg.Button('Open Chronect input', key = 'Quantos')],
                             [sg.Button('Close', bind_return_key = True)]
                             ]
         
-        layout = [  [sg.Text(message), sg.Column(buttoncolumn)]
+        layout = [  [sg.Text(message), sg.Column(button_column)]
                     ]
 
         window = sg.Window(title, layout, keep_on_top = True, return_keyboard_events = True, right_click_menu = right)
-        window.Finalize()
+        window.finalize()
         window.TKroot.focus_force()
 
         while True:
             try:
-                event, values = window.Read()
-
+                event, _ = window.read()
                 ''' You may need to add a delay or other function: loading the dialog by pressing Enter too slowly will trigger event == chr(13) '''
                 if event in ['Close', sg.WIN_CLOSED, 'Escape:27', 'Exit', chr(13)]:
                     break
                 elif event == 'Quantos':
                     print('Opening Chronect Quantos inputfile.')
-                    openchronectfile()
+                    open_chronect_file()
             except KeyboardInterrupt:
                 break
         window.close()
-    else:
-        print(error)
 
 # Open output files
-def openchronectfile():
-    os.system(f'start excel "{os.path.join(mydir, ChronectInputfile)}"')
+def open_chronect_file():
+    os.system(f'start excel "{os.path.join(mydir, chronect_input_file)}"')
 
 # For faster debugging
-def killexcel():
+def kill_excel():
     os.system('taskkill /f /im excel.exe')
 
 sg.theme('Green')
 right = ['right', ['Exit']]
-finalmessage = []
+final_message = []
 
 pydir = params.pydir
 mydir = pydir
@@ -330,34 +324,34 @@ os.chdir(mydir)
 # Get rack type
 ''' All possible rack types should be in your rackparameters.
     Format: name(str), rows(int), cols(int)'''
-rackparameters = [['96', 8, 12], ['48', 6, 8], ['24 (4-mL)', 4, 6], ['24 (8-mL)', 4, 6]]
-racktype = getRackType()
+rack_parameters = [['96', 8, 12], ['48', 6, 8], ['24 (4-mL)', 4, 6], ['24 (8-mL)', 4, 6]]
+rack_type = get_rack_type()
 
-platerows = list(string.ascii_uppercase)[:8] # Letters A-H
-platecols = [str(x + 1) for x in range(24)]
+plate_rows = list(string.ascii_uppercase)[:8] # Letters A-H
+plate_cols = [str(x + 1) for x in range(24)]
 
-for p in rackparameters:
-    if racktype == p[0]:
-        all_locations_no_zeroes = [(row + col) for row in platerows[:p[1]] for col in platecols[:p[2]]]
+for p in rack_parameters:
+    if rack_type == p[0]:
+        all_locations_no_zeroes = [(row + col) for row in plate_rows[:p[1]] for col in plate_cols[:p[2]]]
         break
 
 # Get Chronect dosing tray location
-ChronectDosingTray = setChronectDosingTray()
+chronect_dosing_tray = set_chronect_dosing_tray()
 
 ''' Here is the example input for the createSubstanceCSL function. You could automatically generate this from an eLN table, or user Excel input, for example '''
-examplesubstances = [   {'Name': 't-BuBrettPhos', 'DoseLocations': ['', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '', '', '', '', '', '', '']},
+example_substances = [  {'Name': 't-BuBrettPhos', 'DoseLocations': ['', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '1.0 mg', '', '', '', '', '', '', '', '']},
                         {'Name': 'CataCXium A', 'DoseLocations': ['2.1 mg', '2.1 mg', '2.1 mg', '2.1 mg', '2.1 mg', '2.1 mg', '2.1 mg', '2.1 mg', '0.5 mg', '', '0.5 mg', '', '0.5 mg', '', '0.5 mg', '', '', '', '', '', '', '', '', '']}
                         ]
 
-CSLsubstances = []
-for substance in examplesubstances:
-    substanceCSL = createSubstanceCSL(substance['Name'], substance['DoseLocations'])
-    CSLsubstances.append(substanceCSL)
+csl_substances = []
+for substance in example_substances:
+    substance_csl = create_substance_csl(substance['Name'], substance['DoseLocations'])
+    csl_substances.append(substance_csl)
 
 # Write Chronect inputfile
-if ChronectDosingTray:
-    ChronectInputfile = f'inputfile.csl' ### Default name
-    createChronectInput()
+if chronect_dosing_tray:
+    chronect_input_file = 'inputfile.csl' ### Default name
+    create_chronect_input()
 
-if finalmessage:
-    finalpopup(finalmessage, 'Successful!')
+if final_message:
+    final_popup(final_message, 'Successful!')
